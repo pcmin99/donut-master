@@ -24,6 +24,8 @@ from transformers.file_utils import ModelOutput
 from transformers.modeling_utils import PretrainedConfig, PreTrainedModel
 
 
+
+
 class SwinEncoder(nn.Module):
     r"""
     Donut encoder based on SwinTransformer
