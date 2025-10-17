@@ -99,10 +99,13 @@ class SwinEncoder(nn.Module):
         Args:
             x: (batch_size, num_channels, height, width)
         """
-        x = self.model.patch_embed(x)
-        x = self.model.pos_drop(x)
+        x = self.model.patch_embed(x) # 이미지 패치로 분활
+        x = self.model.pos_drop(x) 
         x = self.model.layers(x)
         return x
+        # print: (batch_size, 패치 개수, 특정 차원)
+        # ex) (B, 400, 1024)
+
 
     def prepare_input(self, img: PIL.Image.Image, random_padding: bool = False) -> torch.Tensor:
         """
@@ -209,7 +212,12 @@ class BARTDecoder(nn.Module):
         if newly_added_num > 0:
             self.model.resize_token_embeddings(len(self.tokenizer))
 
-    def prepare_inputs_for_inference(self, input_ids: torch.Tensor, encoder_outputs: torch.Tensor, past_key_values=None, past=None, use_cache: bool = None, attention_mask: torch.Tensor = None):
+    def prepare_inputs_for_inference(self, 
+                                     input_ids: torch.Tensor, 
+                                     encoder_outputs: torch.Tensor, 
+                                     past_key_values=None, past=None, 
+                                     use_cache: bool = None, 
+                                     attention_mask: torch.Tensor = None):
         """
         Args:
             input_ids: (batch_size, sequence_lenth)
@@ -349,6 +357,8 @@ class DonutConfig(PretrainedConfig):
 
     model_type = "donut"
 
+    # 보이는 것처럼 donut ai model은 
+    # img, file,,, 등등 여러 가지 정보들에 대해서 default 값을 두고 있음                                                            예상 한계점: 강제 사이즈 보정이기에 데이터 손실이 야기됨 
     def __init__(
         self,
         input_size: List[int] = [2560, 1920],
