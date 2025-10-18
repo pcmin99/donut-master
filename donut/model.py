@@ -25,6 +25,62 @@ from transformers.modeling_utils import PretrainedConfig, PreTrainedModel
 
 
 
+# 특정 layer에 대한 보완 코드
+class CrossAttentionFusionLayer(nn.Module):
+    """
+    Vision 과 Text 특징을 Cross-Attention으로 융합하는 레이어
+
+    Args:
+        hidden_dim: 특징 벡터의 차원 (encoder, decode 의 hidden dimension)
+        num_heads: Multi-head attention의 헤드수
+    """
+    def __init__(self, hidden_dim=1024 , num_heads =8 ):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+
+        self.query_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.key_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.value_proj = nn.Linear(hidden_dim, hidden_dim)
+
+        self.cross_attn = nn.MultiheadAttention(
+            embed_dim = hidden_dim ,
+            num_heads = num_heads , 
+            batch_first= False 
+        )
+
+        self.norm = nn.LayerNorm(hidden_dim)
+
+        self.ff = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim * 4),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim * 4, hidden_dim),
+            nn.Dropout(0.1)
+        )
+
+        self.norm2 = nn.LayerNorm(hidden_dim)
+
+    def forward(self, vision_feats, text_embeds):
+        """
+        Args:
+            vision_feats: Encoder의 출력 (B, N_patches, hidden_dim)
+            text_embeds: Decoder의 임베딩 (B, N_tokens, hiiden_dim)
+        
+        Returns:
+            fused: 융합된 특징 (B, N_tokens, hidden_dim)
+        """
+        q = self.query_proj(text_embeds)
+        k = self.key_proj(vision_feats)
+        v = self.value_proj(vision_feats)
+
+        attn_output, attn_weights = self.cross_attn(q, k, v)
+
+        fused = self.norm(attn_output+ text_embeds)
+        ff_output = self.ff(fused)
+        fused = self.norm2(ff_output + fused)
+        return fused
+
 
 class SwinEncoder(nn.Module):
     r"""
@@ -353,6 +409,12 @@ class DonutConfig(PretrainedConfig):
             Max position embeddings(=maximum sequence length) you want to train
         name_or_path:
             Name of a pretrained model name either registered in huggingface.co. or saved in local
+        use_fusion:
+            Whether to use CrossAttentionFusion layer
+        fusion_hidden_dim:
+            Hidden dimension for fusion layer
+        fusion_num_heads:
+            Number attention heads for fusion layer
     """
 
     model_type = "donut"
@@ -369,6 +431,9 @@ class DonutConfig(PretrainedConfig):
         max_position_embeddings: int = None,
         max_length: int = 1536,
         name_or_path: Union[str, bytes, os.PathLike] = "",
+        use_fusion: bool = False, # 추가 코드
+        fusion_hidden_dim: int = 1024 , # 추가 코드
+        fusion_num_heads: int = 8, # 추가 코드
         **kwargs,
     ):
         super().__init__()
@@ -380,6 +445,9 @@ class DonutConfig(PretrainedConfig):
         self.max_position_embeddings = max_length if max_position_embeddings is None else max_position_embeddings
         self.max_length = max_length
         self.name_or_path = name_or_path
+        self.use_fusion = use_fusion # 추가 코드
+        self.fusion_hidden_dim = fusion_hidden_dim # 추가 코드
+        self.fusion_num_heads = fusion_num_heads # 추가 코드
 
 
 class DonutModel(PreTrainedModel):
@@ -408,6 +476,14 @@ class DonutModel(PreTrainedModel):
             name_or_path=self.config.name_or_path,
         )
 
+        # 추가 코드
+        if self.config.use_fusion:
+            self.fusion_layer = CrossAttentionFusionLayer(
+                hidden_dim=self.config.fusion_hidden_dim,
+                num_heads=self.config.fusion_num_heads
+            )
+            print(f" CrossAttentionFusionLayer initialized with hidden_dim={self.config.fusion_hidden_dim}, num_heads={self.config.fusion_num_heads}")
+
     def forward(self, image_tensors: torch.Tensor, decoder_input_ids: torch.Tensor, decoder_labels: torch.Tensor):
         """
         Calculate a loss given an input image and a desired token sequence,
@@ -419,6 +495,8 @@ class DonutModel(PreTrainedModel):
             decode_labels: (batch_size, sequence_length)
         """
         encoder_outputs = self.encoder(image_tensors)
+
+        
         decoder_outputs = self.decoder(
             input_ids=decoder_input_ids,
             encoder_hidden_states=encoder_outputs,
