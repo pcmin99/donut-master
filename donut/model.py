@@ -34,7 +34,7 @@ class CrossAttentionFusionLayer(nn.Module):
         hidden_dim: 특징 벡터의 차원 (encoder, decode 의 hidden dimension)
         num_heads: Multi-head attention의 헤드수
     """
-    def __init__(self, hidden_dim=1024 , num_heads =8 ):
+    def __init__(self, hidden_dim=1024 , num_heads=8):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
@@ -241,10 +241,34 @@ class BARTDecoder(nn.Module):
         self.model.model.decoder.embed_tokens.padding_idx = self.tokenizer.pad_token_id
         self.model.prepare_inputs_for_generation = self.prepare_inputs_for_inference
 
+        def adjust_state_dict_for_vocab(state_dict, tokenizer, model):
+            for key in ['model.decoder.embed_tokens.weight', 'lm_head.weight']:
+                if key in state_dict:
+                    ckpt_weight = state_dict[key]
+                    if key == 'model.decoder.embed_tokens.weight':
+                        model_weight = model.model.decoder.embed_tokens.weight
+                    elif key == 'lm_head.weight':
+                        model_weight = model.lm_head.weight
+                    model_size = model_weight.shape[0]
+                    ckpt_size = ckpt_weight.shape[0]
+
+                    if ckpt_size < model_size:
+                        mean_emb = ckpt_weight.mean(dim=0, keepdim=True)
+                        padding = mean_emb.repeat(model_size - ckpt_size, 1)
+                        state_dict[key] = torch.cat([ckpt_weight, padding], dim=0)
+                    elif ckpt_size > model_size:
+                        state_dict[key] = ckpt_weight[:model_size, :]
+            return state_dict
+
+
+
+
         # weight init with asian-bart
         if not name_or_path:
             bart_state_dict = MBartForCausalLM.from_pretrained("hyunwoongko/asian-bart-ecjk").state_dict()
             new_bart_state_dict = self.model.state_dict()
+            new_bart_state_dict = adjust_state_dict_for_vocab(bart_state_dict, self.tokenizer, self.model)
+
             for x in new_bart_state_dict:
                 if x.endswith("embed_positions.weight") and self.max_position_embeddings != 1024:
                     new_bart_state_dict[x] = torch.nn.Parameter(
@@ -254,11 +278,13 @@ class BARTDecoder(nn.Module):
                             + 2,  # https://github.com/huggingface/transformers/blob/v4.11.3/src/transformers/models/mbart/modeling_mbart.py#L118-L119
                         )
                     )
-                elif x.endswith("embed_tokens.weight") or x.endswith("lm_head.weight"):
-                    new_bart_state_dict[x] = bart_state_dict[x][: len(self.tokenizer), :]
-                else:
+                
+                elif x not in ['model.decoder.embed_token.weight', 'lm_head.weight']:
                     new_bart_state_dict[x] = bart_state_dict[x]
-            self.model.load_state_dict(new_bart_state_dict)
+                # else:
+                #     new_bart_state_dict[x] = bart_state_dict[x]
+            self.model.load_state_dict(new_bart_state_dict, strict=False)
+            
 
     def add_special_tokens(self, list_of_tokens: List[str]):
         """
@@ -496,12 +522,21 @@ class DonutModel(PreTrainedModel):
         """
         encoder_outputs = self.encoder(image_tensors)
 
-        
-        decoder_outputs = self.decoder(
+        # layer 실행을 위해 추가 코드 
+        if self.config.use_fusion and hasattr(self, 'fusion_layer'):
+            decoder_input_embeds = self.decoder.model.model.decoder.embed_tokens(decoder_input_ids)
+            fused_embeds = self.fusion_layer(encoder_outputs, decoder_input_embeds) # fusion 수행        
+            decoder_outputs = self.decoder(
             input_ids=decoder_input_ids,
             encoder_hidden_states=encoder_outputs,
             labels=decoder_labels,
-        )
+            )
+        else: # 기존 방식 fusion 없이 실행
+            decoder_outputs = self.decoder(
+            input_ids=decoder_input_ids,
+            encoder_hidden_states=encoder_outputs,
+            labels=decoder_labels,
+            )
         return decoder_outputs
 
     def inference(
