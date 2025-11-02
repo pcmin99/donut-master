@@ -446,7 +446,7 @@ class DonutConfig(PretrainedConfig):
     model_type = "donut"
 
     # 보이는 것처럼 donut ai model은 
-    # img, file,,, 등등 여러 가지 정보들에 대해서 default 값을 두고 있음                                                            예상 한계점: 강제 사이즈 보정이기에 데이터 손실이 야기됨 
+    # img, file,,, 등등 여러 가지 정보들에 대해서 default 값을 두고 있음        예상 한계점: 강제 사이즈 보정이기에 데이터 손실이 야기됨 
     def __init__(
         self,
         input_size: List[int] = [2560, 1920],
@@ -527,16 +527,17 @@ class DonutModel(PreTrainedModel):
             decoder_input_embeds = self.decoder.model.model.decoder.embed_tokens(decoder_input_ids)
             fused_embeds = self.fusion_layer(encoder_outputs, decoder_input_embeds) # fusion 수행        
             decoder_outputs = self.decoder(
-            input_ids=decoder_input_ids,
-            encoder_hidden_states=encoder_outputs,
-            labels=decoder_labels,
+                input_ids=decoder_input_ids,
+                encoder_hidden_states=encoder_outputs,
+                labels=decoder_labels,
             )
         else: # 기존 방식 fusion 없이 실행
             decoder_outputs = self.decoder(
-            input_ids=decoder_input_ids,
-            encoder_hidden_states=encoder_outputs,
-            labels=decoder_labels,
-            )
+                input_ids=decoder_input_ids,
+                encoder_hidden_states=encoder_outputs,
+                labels=decoder_labels,
+            )   
+        
         return decoder_outputs
 
     def inference(
